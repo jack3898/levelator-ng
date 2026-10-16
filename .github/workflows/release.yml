@@ -1,14 +1,16 @@
 name: Release
 
-# Push a tag such as `v2.1.2` (or run manually with a tag name) to build the
-# CLI and GUI for every platform and attach the archives to a GitHub Release.
+# Push a tag such as `v2.2.0` to build the CLI and GUI for every platform and
+# attach the archives to a GitHub Release. Or run it manually ("Run workflow")
+# on a branch with a new tag name: it builds that branch and creates the tag
+# and release.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build and release (e.g. v2.1.2)"
+        description: "Tag to create and release (e.g. v2.2.0)"
         required: true
 
 permissions:
@@ -38,9 +40,10 @@ jobs:
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
-          ref: ${{ env.TAG }}
+          # Tag push: build the tag. Manual run: build the selected branch.
+          ref: ${{ github.event_name == 'push' && env.TAG || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -103,6 +106,8 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
+          # Creates the tag at this commit when it doesn't exist yet.
+          target_commitish: ${{ github.sha }}
           name: Levelator ${{ env.TAG }}
           generate_release_notes: true
           files: dist/*

@@ -131,12 +131,13 @@ Push a version tag and the [release workflow](.github/workflows/release.yml)
 builds every platform and publishes a GitHub Release with the archives:
 
 ```sh
-git tag v2.1.2
-git push origin v2.1.2
+git tag v2.2.0
+git push origin v2.2.0
 ```
 
-You can also run it manually from the Actions tab (**Release → Run workflow**)
-with an existing tag.
+You can also run it from the Actions tab: **Release → Run workflow**, pick a
+branch and enter a new tag name. The workflow builds that branch and creates
+the tag and the release.
 
 ## Disclaimer
 
