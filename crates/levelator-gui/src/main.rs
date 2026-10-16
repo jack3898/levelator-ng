@@ -141,7 +141,12 @@ impl LevelatorApp {
     }
 }
 
-fn spawn_worker(jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Context, cancel: Arc<AtomicBool>) {
+fn spawn_worker(
+    jobs: Receiver<Job>,
+    events: Sender<Event>,
+    ctx: egui::Context,
+    cancel: Arc<AtomicBool>,
+) {
     thread::Builder::new()
         .name("Levelator".into())
         .spawn(move || {
@@ -163,14 +168,25 @@ fn spawn_worker(jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Context, 
                 let mut progress = |p: u32| {
                     if p != last && p > 0 {
                         last = p;
-                        let _ = events.send(Event::Progress { name: name.clone(), percent: p });
+                        let _ = events.send(Event::Progress {
+                            name: name.clone(),
+                            percent: p,
+                        });
                         ctx.request_repaint();
                     }
                 };
-                let result = level_file(&input, &output, &Settings::default(), &mut progress, &cancel);
+                let result = level_file(
+                    &input,
+                    &output,
+                    &Settings::default(),
+                    &mut progress,
+                    &cancel,
+                );
                 let _ = events.send(match result {
                     Ok(()) => Event::Done,
-                    Err(e) => Event::Failed { message: format!("Level reports: {e}") },
+                    Err(e) => Event::Failed {
+                        message: format!("Level reports: {e}"),
+                    },
                 });
                 ctx.request_repaint();
                 if cancel.load(Ordering::Relaxed) {
@@ -218,7 +234,13 @@ impl eframe::App for LevelatorApp {
         let ctx = ui.ctx().clone();
         self.drain_events(&ctx);
 
-        let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect()
+        });
         for p in dropped {
             self.handle_file(p);
         }
@@ -227,19 +249,41 @@ impl eframe::App for LevelatorApp {
         }
         let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
 
-        let frame = egui::Frame::central_panel(ui.style()).fill(egui::Color32::BLACK).inner_margin(16.0);
+        let frame = egui::Frame::central_panel(ui.style())
+            .fill(egui::Color32::BLACK)
+            .inner_margin(16.0);
         egui::CentralPanel::default().frame(frame).show(ui, |ui| {
-            let area = ui.interact(ui.max_rect(), ui.scope_id().with("drop-area"), egui::Sense::click());
+            let area = ui.interact(
+                ui.max_rect(),
+                ui.scope_id().with("drop-area"),
+                egui::Sense::click(),
+            );
             if area.double_clicked() {
                 self.open_dialog();
             }
             ui.vertical_centered(|ui| {
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new(TITLE).size(26.0).strong().color(egui::Color32::WHITE));
-                ui.label(egui::RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(egui::Color32::GRAY));
+                ui.label(
+                    egui::RichText::new(TITLE)
+                        .size(26.0)
+                        .strong()
+                        .color(egui::Color32::WHITE),
+                );
+                ui.label(
+                    egui::RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                        .color(egui::Color32::GRAY),
+                );
                 ui.add_space(18.0);
-                let status = if hovering { "Drop to level" } else { self.status.as_str() };
-                ui.label(egui::RichText::new(status).size(15.0).color(egui::Color32::WHITE));
+                let status = if hovering {
+                    "Drop to level"
+                } else {
+                    self.status.as_str()
+                };
+                ui.label(
+                    egui::RichText::new(status)
+                        .size(15.0)
+                        .color(egui::Color32::WHITE),
+                );
                 ui.add_space(6.0);
                 progress_ticks(ui, self.percent);
                 ui.add_space(4.0);
@@ -250,7 +294,10 @@ impl eframe::App for LevelatorApp {
                 };
                 ui.label(egui::RichText::new(right).color(egui::Color32::LIGHT_GRAY));
                 if self.pending > 1 {
-                    ui.label(egui::RichText::new(format!("{} files queued", self.pending - 1)).color(egui::Color32::GRAY));
+                    ui.label(
+                        egui::RichText::new(format!("{} files queued", self.pending - 1))
+                            .color(egui::Color32::GRAY),
+                    );
                 }
                 ui.add_space(10.0);
                 ui.label(
@@ -281,7 +328,11 @@ impl eframe::App for LevelatorApp {
 }
 
 fn main() -> eframe::Result {
-    let initial: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).filter(|p| !is_psn_arg(p)).collect();
+    let initial: Vec<PathBuf> = std::env::args_os()
+        .skip(1)
+        .map(PathBuf::from)
+        .filter(|p| !is_psn_arg(p))
+        .collect();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(TITLE)
@@ -290,7 +341,11 @@ fn main() -> eframe::Result {
             .with_drag_and_drop(true),
         ..Default::default()
     };
-    eframe::run_native(TITLE, options, Box::new(|cc| Ok(Box::new(LevelatorApp::new(cc.egui_ctx.clone(), initial)))))
+    eframe::run_native(
+        TITLE,
+        options,
+        Box::new(|cc| Ok(Box::new(LevelatorApp::new(cc.egui_ctx.clone(), initial)))),
+    )
 }
 
 /// macOS Finder passes `-psn_0_12345` to apps launched from older systems.

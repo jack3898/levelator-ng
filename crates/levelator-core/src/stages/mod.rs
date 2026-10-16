@@ -5,12 +5,15 @@
 //! [`Signal`]; [`Signal::requantize`] reproduces the rounding that writing
 //! and re-reading an integer PCM temp file through libsndfile caused.
 
+pub mod apply_gains;
 pub mod calc_rms;
 pub mod calculate_gains;
 pub mod gate;
 pub mod highpass;
+pub mod normalize;
 pub mod reduce_loud;
 pub mod segment;
+pub mod smooth_gains;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -27,25 +30,33 @@ pub struct Signal {
 }
 
 impl Signal {
-    pub fn from_buffer(buf: &AudioBuffer) -> Self {
-        let ch = buf.num_channels();
-        let frames = buf.frames();
-        let mut data = Vec::with_capacity(frames * ch);
-        for i in 0..frames {
-            for c in &buf.channels {
-                data.push(c[i]);
-            }
+    /// Takes over the buffer's samples without copying.
+    pub fn from_buffer(buf: AudioBuffer) -> Self {
+        Signal {
+            channels: buf.num_channels(),
+            sample_rate: buf.format.sample_rate as i32,
+            format: buf.format,
+            data: buf.data,
         }
-        Signal { data, channels: ch, sample_rate: buf.format.sample_rate as i32, format: buf.format }
     }
 
     pub fn into_buffer(self) -> AudioBuffer {
-        let ch = self.channels;
-        let mut buf = AudioBuffer::new(self.format, self.frames());
-        for (i, x) in self.data.into_iter().enumerate() {
-            buf.channels[i % ch][i / ch] = x;
+        let mut format = self.format;
+        format.channels = self.channels as u16;
+        AudioBuffer {
+            format,
+            data: self.data,
         }
-        buf
+    }
+
+    /// Same format, no samples.
+    pub fn clone_empty(&self) -> Self {
+        Signal {
+            data: Vec::new(),
+            channels: self.channels,
+            sample_rate: self.sample_rate,
+            format: self.format,
+        }
     }
 
     pub fn frames(&self) -> usize {
@@ -72,12 +83,20 @@ pub struct Progress<'a> {
 
 impl<'a> Progress<'a> {
     pub fn new(callback: &'a mut dyn FnMut(u32), cancel: &'a AtomicBool) -> Self {
-        Progress { last: -1, callback, cancel }
+        Progress {
+            last: -1,
+            callback,
+            cancel,
+        }
     }
 
     /// `b / (n - 1)`, or 1.0 when there is a single step.
     pub fn frac(b: usize, n: usize) -> f64 {
-        if n > 1 { b as f64 / (n - 1) as f64 } else { 1.0 }
+        if n > 1 {
+            b as f64 / (n - 1) as f64
+        } else {
+            1.0
+        }
     }
 
     pub fn update(&mut self, start: f64, end: f64, frac: f64) -> Result<(), Error> {

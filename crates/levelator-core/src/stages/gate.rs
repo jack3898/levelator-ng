@@ -53,7 +53,11 @@ impl Meter {
         for &x in d {
             sum = x * x + sum;
         }
-        Meter { buf: d.to_vec(), cur: 0, sum }
+        Meter {
+            buf: d.to_vec(),
+            cur: 0,
+            sum,
+        }
     }
 
     fn push(&mut self, x: f64) -> f64 {
@@ -146,7 +150,12 @@ impl Channel {
     }
 }
 
-pub fn run(sig: &Signal, args: &GateArgs, progress: &mut Progress, name: &str) -> Result<Signal, Error> {
+pub fn run(
+    sig: Signal,
+    args: &GateArgs,
+    progress: &mut Progress,
+    name: &str,
+) -> Result<Signal, Error> {
     let sr = sig.sample_rate;
     let ch = sig.channels;
     let frames = sig.frames();
@@ -160,7 +169,7 @@ pub fn run(sig: &Signal, args: &GateArgs, progress: &mut Progress, name: &str) -
     // The look-ahead handle is seeked `antic_n` frames in; if that fails the
     // original copied the input file unchanged.
     if antic_n < 0 || antic_n as usize > frames {
-        return Ok(sig.clone());
+        return Ok(sig);
     }
     if frames < n {
         return Err(Error::Format(format!("{name}: Expected more samples")));
@@ -200,7 +209,7 @@ pub fn run(sig: &Signal, args: &GateArgs, progress: &mut Progress, name: &str) -
 
     let block = 8192 - 8192 % ch;
     let total = sig.data.len();
-    let mut out = sig.clone();
+    let mut out = sig;
     let mut buf_ahead = vec![0.0f64; block];
     let mut main_pos = 0usize;
     let mut ahead_pos = antic_n as usize * ch;
@@ -209,22 +218,26 @@ pub fn run(sig: &Signal, args: &GateArgs, progress: &mut Progress, name: &str) -
     while main_pos < total {
         let n_main = block.min(total - main_pos);
         let n_ahead = block.min(total - ahead_pos);
-        buf_ahead[..n_ahead].copy_from_slice(&sig.data[ahead_pos..ahead_pos + n_ahead]);
+        buf_ahead[..n_ahead].copy_from_slice(&out.data[ahead_pos..ahead_pos + n_ahead]);
         ahead_pos += n_ahead;
 
         let mut i = 0;
         while i < n_main {
             for (c, chan) in chans.iter_mut().enumerate() {
-                let x = sig.data[main_pos + i + c];
+                let x = out.data[main_pos + i + c];
                 let cur = chan.cur.push(x);
-                let ahd = if n_ahead >= 1 { chan.ahead.push(buf_ahead[i + c]) } else { cur };
+                let ahd = if n_ahead >= 1 {
+                    chan.ahead.push(buf_ahead[i + c])
+                } else {
+                    cur
+                };
                 chan.step(cur, ahd, &p);
                 out.data[main_pos + i + c] = x * chan.gain;
             }
             i += ch;
         }
         main_pos += n_main;
-        progress.update(10.0, 20.0, Progress::frac(bi, nblocks))?;
+        progress.update(14.0, 20.0, Progress::frac(bi, nblocks))?;
         bi += 1;
     }
     out.requantize();
@@ -241,15 +254,30 @@ mod tests {
     fn attenuates_quiet_passages() {
         let sr = 8000;
         let mut data = vec![0.0001; sr as usize * 2];
-        for (i, x) in data.iter_mut().enumerate().skip(sr as usize / 2).take(sr as usize) {
+        for (i, x) in data
+            .iter_mut()
+            .enumerate()
+            .skip(sr as usize / 2)
+            .take(sr as usize)
+        {
             *x = 0.5 * (i as f64 * 0.3).sin();
         }
-        let format = AudioFormat { container: Container::Wav, encoding: Encoding::Float(64), sample_rate: sr as u32, channels: 1 };
-        let sig = Signal { data, channels: 1, sample_rate: sr, format };
+        let format = AudioFormat {
+            container: Container::Wav,
+            encoding: Encoding::Float(64),
+            sample_rate: sr as u32,
+            channels: 1,
+        };
+        let sig = Signal {
+            data,
+            channels: 1,
+            sample_rate: sr,
+            format,
+        };
         let cancel = AtomicBool::new(false);
         let mut cb = |_| {};
         let mut p = Progress::new(&mut cb, &cancel);
-        let out = run(&sig, &GateArgs::with_threshold(-40.0), &mut p, "t").unwrap();
+        let out = run(sig.clone(), &GateArgs::with_threshold(-40.0), &mut p, "t").unwrap();
         // Start: closed (-12 dB).
         assert!((out.data[10] / sig.data[10] - from_db(-12.0)).abs() < 1e-12);
         // Middle of the loud part: fully open.

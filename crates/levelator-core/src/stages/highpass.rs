@@ -17,7 +17,10 @@ pub struct HighpassArgs {
 
 impl Default for HighpassArgs {
     fn default() -> Self {
-        HighpassArgs { low_hz: 25.0, high_hz: 100.0 }
+        HighpassArgs {
+            low_hz: 25.0,
+            high_hz: 100.0,
+        }
     }
 }
 
@@ -38,7 +41,7 @@ pub struct Biquad {
 impl Biquad {
     /// RBJ high-pass (0x3c3da, type 1) with bandwidth in octaves.
     pub fn highpass(f0: f64, fs: f64, bw: f64) -> Self {
-        let w0 = (f0 * 6.283185307179586) / fs;
+        let w0 = (f0 * std::f64::consts::TAU) / fs;
         let s = w0.sin();
         let c = w0.cos();
         let alpha = ((w0 * (bw * 0.34657359027997264)) / s).sinh() * s;
@@ -47,11 +50,22 @@ impl Biquad {
         let a0 = alpha + 1.0;
         let a1 = c * -2.0;
         let a2 = 1.0 - alpha;
-        Biquad { b0: b0 / a0, b1: b1 / a0, b2: b0 / a0, a1: a1 / a0, a2: a2 / a0, x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0 }
+        Biquad {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b0 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
     }
 
     pub fn tick(&mut self, x: f64) -> f64 {
-        let y = (((x * self.b0 + self.x1 * self.b1) + self.b2 * self.x2) - self.a1 * self.y1) - self.a2 * self.y2;
+        let y = (((x * self.b0 + self.x1 * self.b1) + self.b2 * self.x2) - self.a1 * self.y1)
+            - self.a2 * self.y2;
         self.x2 = self.x1;
         self.x1 = x;
         self.y2 = self.y1;
@@ -62,20 +76,32 @@ impl Biquad {
 
 fn clamp1(y: f64) -> f64 {
     let t = if -1.0 > y { -1.0 } else { y };
-    if !(1.0 < y) { t } else { 1.0 }
+    if !(1.0 < y) {
+        t
+    } else {
+        1.0
+    }
 }
 
 /// Returns the filtered signal and its level in dB (0.0 for silence).
-pub fn run(sig: &Signal, args: &HighpassArgs, progress: &mut Progress, name: &str) -> Result<(Signal, f64), Error> {
+pub fn run(
+    sig: Signal,
+    args: &HighpassArgs,
+    progress: &mut Progress,
+    name: &str,
+) -> Result<(Signal, f64), Error> {
     let ch = sig.channels;
     if ch > 2 {
-        return Err(Error::Format(format!("{name}: cannot process more than 2 channels;  has {ch}")));
+        return Err(Error::Format(format!(
+            "{name}: cannot process more than 2 channels;  has {ch}"
+        )));
     }
     let center = (args.low_hz + args.high_hz) * 0.5;
     let bw = (args.high_hz / args.low_hz).ln() / 2f64.ln();
     let mut filters = vec![Biquad::highpass(center, sig.sample_rate as f64, bw); ch];
     let mut sums = vec![0.0f64; ch];
-    let mut out = sig.clone();
+    let frames = sig.frames();
+    let mut out = sig;
     let block = 8192 - 8192 % ch;
     let nblocks = out.data.len().div_ceil(block);
     for (bi, chunk) in out.data.chunks_mut(block).enumerate() {
@@ -86,11 +112,15 @@ pub fn run(sig: &Signal, args: &HighpassArgs, progress: &mut Progress, name: &st
                 sums[c] = y * y + sums[c];
             }
         }
-        progress.update(0.0, 10.0, Progress::frac(bi, nblocks))?;
+        progress.update(0.0, 14.0, Progress::frac(bi, nblocks))?;
     }
     let (l, r) = (sums[0], sums.get(1).copied().unwrap_or(0.0));
     let m = if r <= l { l } else { r };
-    let level = if m == 0.0 { 0.0 } else { 20.0 * (m / sig.frames() as f64).sqrt().log10() };
+    let level = if m == 0.0 {
+        0.0
+    } else {
+        20.0 * (m / frames as f64).sqrt().log10()
+    };
     out.requantize();
     Ok((out, level))
 }

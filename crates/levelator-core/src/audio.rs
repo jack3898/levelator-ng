@@ -45,23 +45,24 @@ pub struct AudioFormat {
     pub channels: u16,
 }
 
-/// Decoded audio: one `Vec<f64>` per channel, normalised to roughly [-1, 1).
+/// Decoded audio as interleaved samples normalised to roughly [-1, 1), the
+/// layout libsndfile's `sf_read_double` produced.
 #[derive(Clone, Debug)]
 pub struct AudioBuffer {
     pub format: AudioFormat,
-    pub channels: Vec<Vec<f64>>,
+    pub data: Vec<f64>,
 }
 
 impl AudioBuffer {
     pub fn new(format: AudioFormat, frames: usize) -> Self {
         AudioBuffer {
             format,
-            channels: vec![vec![0.0; frames]; format.channels as usize],
+            data: vec![0.0; frames * format.channels as usize],
         }
     }
 
     pub fn frames(&self) -> usize {
-        self.channels.first().map_or(0, Vec::len)
+        self.data.len() / self.num_channels().max(1)
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -69,7 +70,7 @@ impl AudioBuffer {
     }
 
     pub fn num_channels(&self) -> usize {
-        self.channels.len()
+        self.format.channels as usize
     }
 }
 
@@ -143,7 +144,8 @@ pub fn write(path: &Path, buf: &AudioBuffer) -> Result<(), Error> {
 // ---------------------------------------------------------------- WAV
 
 fn read_wav(path: &Path) -> Result<AudioBuffer, Error> {
-    let reader = hound::WavReader::open(path).map_err(|e| Error::Format(format!("{}: {e}", path.display())))?;
+    let reader = hound::WavReader::open(path)
+        .map_err(|e| Error::Format(format!("{}: {e}", path.display())))?;
     let spec = reader.spec();
     let channels = spec.channels as usize;
     if channels == 0 {
@@ -165,13 +167,13 @@ fn read_wav(path: &Path) -> Result<AudioBuffer, Error> {
     match encoding {
         Encoding::Pcm(bits) => {
             let scale = read_scale(bits);
-            for (i, s) in reader.into_samples::<i32>().enumerate() {
-                buf.channels[i % channels][i / channels] = s.map_err(wav_err)? as f64 * scale;
+            for (x, s) in buf.data.iter_mut().zip(reader.into_samples::<i32>()) {
+                *x = s.map_err(wav_err)? as f64 * scale;
             }
         }
         Encoding::Float(_) => {
-            for (i, s) in reader.into_samples::<f32>().enumerate() {
-                buf.channels[i % channels][i / channels] = s.map_err(wav_err)? as f64;
+            for (x, s) in buf.data.iter_mut().zip(reader.into_samples::<f32>()) {
+                *x = s.map_err(wav_err)? as f64;
             }
         }
     }
@@ -191,12 +193,10 @@ fn write_wav(path: &Path, buf: &AudioBuffer) -> Result<(), Error> {
     };
     let wav_err = |e: hound::Error| Error::Write(format!("{}: {e}", path.display()));
     let mut w = hound::WavWriter::create(path, spec).map_err(wav_err)?;
-    for i in 0..buf.frames() {
-        for ch in &buf.channels {
-            match f.encoding {
-                Encoding::Pcm(bits) => w.write_sample(to_int(ch[i], bits)).map_err(wav_err)?,
-                Encoding::Float(_) => w.write_sample(ch[i] as f32).map_err(wav_err)?,
-            }
+    for &x in &buf.data {
+        match f.encoding {
+            Encoding::Pcm(bits) => w.write_sample(to_int(x, bits)).map_err(wav_err)?,
+            Encoding::Float(_) => w.write_sample(x as f32).map_err(wav_err)?,
         }
     }
     w.finalize().map_err(wav_err)
@@ -220,7 +220,11 @@ fn ext80_to_f64(b: &[u8]) -> f64 {
         return 0.0;
     }
     let v = mant as f64 * 2f64.powi(exp - 16383 - 63);
-    if b[0] & 0x80 != 0 { -v } else { v }
+    if b[0] & 0x80 != 0 {
+        -v
+    } else {
+        v
+    }
 }
 
 fn f64_to_ext80(v: f64) -> [u8; 10] {
@@ -248,7 +252,8 @@ fn read_aiff(path: &Path) -> Result<AudioBuffer, Error> {
     let bad = |m: &str| Error::Format(format!("{}: {m}", path.display()));
     let mut r = BufReader::new(File::open(path).map_err(|e| Error::open_input(path, e))?);
     let mut hdr = [0u8; 12];
-    r.read_exact(&mut hdr).map_err(|_| bad("truncated header"))?;
+    r.read_exact(&mut hdr)
+        .map_err(|_| bad("truncated header"))?;
     let is_aifc = &hdr[8..12] == b"AIFC";
 
     let mut comm: Option<(u16, u32, u16, f64, [u8; 4])> = None;
@@ -263,7 +268,8 @@ fn read_aiff(path: &Path) -> Result<AudioBuffer, Error> {
         match &ck[0..4] {
             b"COMM" => {
                 let mut c = vec![0u8; size as usize];
-                r.read_exact(&mut c).map_err(|_| bad("truncated COMM chunk"))?;
+                r.read_exact(&mut c)
+                    .map_err(|_| bad("truncated COMM chunk"))?;
                 if c.len() < 18 {
                     return Err(bad("short COMM chunk"));
                 }
@@ -281,7 +287,8 @@ fn read_aiff(path: &Path) -> Result<AudioBuffer, Error> {
             }
             b"SSND" => {
                 let mut o = [0u8; 8];
-                r.read_exact(&mut o).map_err(|_| bad("truncated SSND chunk"))?;
+                r.read_exact(&mut o)
+                    .map_err(|_| bad("truncated SSND chunk"))?;
                 let offset = read_u32be(&o[0..4]) as u64;
                 ssnd = Some((pos + 8 + offset, size.saturating_sub(8 + offset)));
             }
@@ -300,7 +307,11 @@ fn read_aiff(path: &Path) -> Result<AudioBuffer, Error> {
         b"sowt" => (Encoding::Pcm(bits), true),
         b"fl32" | b"FL32" => (Encoding::Float(32), false),
         b"fl64" | b"FL64" => (Encoding::Float(64), false),
-        _ => return Err(bad("unsupported AIFF-C compression (only uncompressed PCM/float is supported)")),
+        _ => {
+            return Err(bad(
+                "unsupported AIFF-C compression (only uncompressed PCM/float is supported)",
+            ))
+        }
     };
     let width = (encoding.bits() as usize).div_ceil(8);
     if !(1..=8).contains(&width) {
@@ -314,11 +325,13 @@ fn read_aiff(path: &Path) -> Result<AudioBuffer, Error> {
     };
     let mut buf = AudioBuffer::new(format, frames as usize);
     if let Some((start, len)) = ssnd {
-        r.seek(SeekFrom::Start(start)).map_err(|_| bad("seek failed"))?;
+        r.seek(SeekFrom::Start(start))
+            .map_err(|_| bad("seek failed"))?;
         let frame_bytes = width * channels as usize;
         let n = (frames as u64).min(len / frame_bytes as u64) as usize;
         let mut data = vec![0u8; n * frame_bytes];
-        r.read_exact(&mut data).map_err(|_| bad("truncated sample data"))?;
+        r.read_exact(&mut data)
+            .map_err(|_| bad("truncated sample data"))?;
         let scale = read_scale(width as u16 * 8);
         for (i, s) in data.chunks_exact(width).enumerate() {
             let mut bytes = s.to_vec();
@@ -326,7 +339,9 @@ fn read_aiff(path: &Path) -> Result<AudioBuffer, Error> {
                 bytes.reverse();
             }
             let v = match encoding {
-                Encoding::Float(32) => f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64,
+                Encoding::Float(32) => {
+                    f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
+                }
                 Encoding::Float(_) => f64::from_be_bytes(bytes[..8].try_into().unwrap()),
                 Encoding::Pcm(_) => {
                     // Sign-extend a big-endian integer of `width` bytes.
@@ -337,11 +352,11 @@ fn read_aiff(path: &Path) -> Result<AudioBuffer, Error> {
                     raw as f64 * scale
                 }
             };
-            buf.channels[i % channels as usize][i / channels as usize] = v;
+            buf.data[i] = v;
         }
-        buf.channels.iter_mut().for_each(|c| c.truncate(n));
+        buf.data.truncate(n * channels as usize);
     } else {
-        buf.channels.iter_mut().for_each(Vec::clear);
+        buf.data.clear();
     }
     Ok(buf)
 }
@@ -365,7 +380,8 @@ fn write_aiff(path: &Path, buf: &AudioBuffer) -> Result<(), Error> {
     let mut w = BufWriter::new(File::create(path).map_err(werr)?);
     w.write_all(b"FORM").map_err(werr)?;
     w.write_all(&form_len.to_be_bytes()).map_err(werr)?;
-    w.write_all(if aifc { b"AIFC" } else { b"AIFF" }).map_err(werr)?;
+    w.write_all(if aifc { b"AIFC" } else { b"AIFF" })
+        .map_err(werr)?;
     if aifc {
         w.write_all(b"FVER").map_err(werr)?;
         w.write_all(&4u32.to_be_bytes()).map_err(werr)?;
@@ -376,7 +392,8 @@ fn write_aiff(path: &Path, buf: &AudioBuffer) -> Result<(), Error> {
     w.write_all(&f.channels.to_be_bytes()).map_err(werr)?;
     w.write_all(&(frames as u32).to_be_bytes()).map_err(werr)?;
     w.write_all(&bits.to_be_bytes()).map_err(werr)?;
-    w.write_all(&f64_to_ext80(f.sample_rate as f64)).map_err(werr)?;
+    w.write_all(&f64_to_ext80(f.sample_rate as f64))
+        .map_err(werr)?;
     if aifc {
         w.write_all(comp).map_err(werr)?;
         w.write_all(&[0, 0]).map_err(werr)?; // empty pascal string, padded
@@ -384,18 +401,16 @@ fn write_aiff(path: &Path, buf: &AudioBuffer) -> Result<(), Error> {
     w.write_all(b"SSND").map_err(werr)?;
     w.write_all(&ssnd_len.to_be_bytes()).map_err(werr)?;
     w.write_all(&[0u8; 8]).map_err(werr)?;
-    for i in 0..frames {
-        for ch in &buf.channels {
-            match f.encoding {
-                Encoding::Float(32) => w.write_all(&(ch[i] as f32).to_be_bytes()),
-                Encoding::Float(_) => w.write_all(&ch[i].to_be_bytes()),
-                Encoding::Pcm(b) => {
-                    let v = to_int(ch[i], b) as i64;
-                    w.write_all(&v.to_be_bytes()[8 - width..])
-                }
+    for &x in &buf.data {
+        match f.encoding {
+            Encoding::Float(32) => w.write_all(&(x as f32).to_be_bytes()),
+            Encoding::Float(_) => w.write_all(&x.to_be_bytes()),
+            Encoding::Pcm(b) => {
+                let v = to_int(x, b) as i64;
+                w.write_all(&v.to_be_bytes()[8 - width..])
             }
-            .map_err(werr)?;
         }
+        .map_err(werr)?;
     }
     if ssnd_len & 1 == 1 {
         w.write_all(&[0]).map_err(werr)?;
@@ -428,11 +443,16 @@ mod tests {
 
     fn roundtrip(container: Container, encoding: Encoding) {
         let dir = std::env::temp_dir().join(format!("levelator-audio-{container:?}-{encoding:?}"));
-        let format = AudioFormat { container, encoding, sample_rate: 44100, channels: 2 };
+        let format = AudioFormat {
+            container,
+            encoding,
+            sample_rate: 44100,
+            channels: 2,
+        };
         let mut buf = AudioBuffer::new(format, 100);
         for i in 0..100 {
-            buf.channels[0][i] = (i as f64 / 100.0) - 0.5;
-            buf.channels[1][i] = -buf.channels[0][i] * 0.5;
+            buf.data[2 * i] = (i as f64 / 100.0) - 0.5;
+            buf.data[2 * i + 1] = -buf.data[2 * i] * 0.5;
         }
         write(&dir, &buf).unwrap();
         let back = read(&dir).unwrap();
@@ -443,10 +463,8 @@ mod tests {
             Encoding::Pcm(b) => 2.0 / (1u64 << (b - 1)) as f64,
             Encoding::Float(_) => 1e-6,
         };
-        for c in 0..2 {
-            for i in 0..100 {
-                assert!((back.channels[c][i] - buf.channels[c][i]).abs() <= tol);
-            }
+        for (a, b) in back.data.iter().zip(&buf.data) {
+            assert!((a - b).abs() <= tol);
         }
     }
 

@@ -22,7 +22,12 @@ pub struct GainArgs {
 
 impl Default for GainArgs {
     fn default() -> Self {
-        GainArgs { noise_threshold: 0.006, bin_ms: 50, gain_limit_db: Some(24.0), buffer_length_s: 0.005 }
+        GainArgs {
+            noise_threshold: 0.006,
+            bin_ms: 50,
+            gain_limit_db: Some(24.0),
+            buffer_length_s: 0.005,
+        }
     }
 }
 
@@ -58,15 +63,25 @@ fn gated_rms(data: &[f64], ring_len: usize, thr: f64) -> f64 {
             wp = 0;
         }
     }
-    if cnt == 0 { 0.0 } else { (sum / cnt as f64).sqrt() }
+    if cnt == 0 {
+        0.0
+    } else {
+        (sum / cnt as f64).sqrt()
+    }
 }
 
 /// Returns `(gains, bin_frames)`: one linear gain per bin, as `_08.txt` held them.
-pub fn run(sig: &Signal, cues: &[u64], args: &GainArgs, progress: &mut Progress) -> Result<(Vec<f64>, u32), Error> {
+pub fn run(
+    sig: &Signal,
+    cues: &[u64],
+    args: &GainArgs,
+    progress: &mut Progress,
+) -> Result<(Vec<f64>, u32), Error> {
     let frames = sig.frames() as u64;
     let ch = sig.channels as u64;
     let sr = sig.sample_rate as u32;
-    let ring_len = (ch as u32).wrapping_mul(sat_u32(sr as f64 * args.buffer_length_s + 1.0)) as usize;
+    let ring_len =
+        (ch as u32).wrapping_mul(sat_u32(sr as f64 * args.buffer_length_s + 1.0)) as usize;
     let bin = sr.wrapping_mul(args.bin_ms) / 1000;
     if bin == 0 {
         return Err(Error::Format("sample rate too low".into()));
@@ -80,9 +95,17 @@ pub fn run(sig: &Signal, cues: &[u64], args: &GainArgs, progress: &mut Progress)
     let mut prev: u64 = 0;
     let mut sum_db = 0.0f64;
     let mut count: u32 = 0;
-    for end in cues.iter().map(|&c| round_cue(c)).chain(std::iter::once(frames)) {
+    for end in cues
+        .iter()
+        .map(|&c| round_cue(c))
+        .chain(std::iter::once(frames))
+    {
         let len = (ch as i64).wrapping_mul(end.wrapping_sub(prev) as i64);
-        let take = if len <= 0 { 0 } else { (len as u64).min((sig.data.len() - pos) as u64) as usize };
+        let take = if len <= 0 {
+            0
+        } else {
+            (len as u64).min((sig.data.len() - pos) as u64) as usize
+        };
         let rms = gated_rms(&sig.data[pos..pos + take], ring_len, args.noise_threshold);
         pos += take;
         let v = if rms > 0.0 {
@@ -109,7 +132,11 @@ pub fn run(sig: &Signal, cues: &[u64], args: &GainArgs, progress: &mut Progress)
             x = (x / l).tanh() * l;
         }
         let g = via_g6(1.0 / 10f64.powf(x / 20.0));
-        let end = if i == count as usize - 1 { frames + 1 } else { round_cue(cues[i]) };
+        let end = if i == count as usize - 1 {
+            frames + 1
+        } else {
+            round_cue(cues[i])
+        };
         let n = (end.wrapping_sub(prev).wrapping_add(bin as u64 - 1) / bin as u64) as u32;
         gains.extend(std::iter::repeat_n(g, n as usize));
         if count > 1 {

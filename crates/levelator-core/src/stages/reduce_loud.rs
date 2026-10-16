@@ -35,12 +35,26 @@ pub struct ReduceLoudArgs {
 impl ReduceLoudArgs {
     /// Values the 2.1.2 pipeline passes to step 3.
     pub fn peak_defaults() -> Self {
-        ReduceLoudArgs { measure: Measure::Peak, noise_floor_db: -44.0, level_diff_db: 15.0, attack_ms: 0, release_ms: 0, bin_ms: 50 }
+        ReduceLoudArgs {
+            measure: Measure::Peak,
+            noise_floor_db: -44.0,
+            level_diff_db: 15.0,
+            attack_ms: 0,
+            release_ms: 0,
+            bin_ms: 50,
+        }
     }
 
     /// Values the 2.1.2 pipeline passes to step 4.
     pub fn rms_defaults() -> Self {
-        ReduceLoudArgs { measure: Measure::Rms, noise_floor_db: -44.0, level_diff_db: 3.0, attack_ms: 0, release_ms: 150, bin_ms: 50 }
+        ReduceLoudArgs {
+            measure: Measure::Rms,
+            noise_floor_db: -44.0,
+            level_diff_db: 3.0,
+            attack_ms: 0,
+            release_ms: 150,
+            bin_ms: 50,
+        }
     }
 }
 
@@ -51,7 +65,12 @@ struct Bin {
     rms: f64,
 }
 
-pub fn run(sig: &Signal, args: &ReduceLoudArgs, progress: &mut Progress, name: &str) -> Result<Signal, Error> {
+pub fn run(
+    sig: Signal,
+    args: &ReduceLoudArgs,
+    progress: &mut Progress,
+    name: &str,
+) -> Result<Signal, Error> {
     let mut noise_floor_db = args.noise_floor_db;
     if noise_floor_db > 0.0 {
         noise_floor_db = -noise_floor_db;
@@ -62,7 +81,9 @@ pub fn run(sig: &Signal, args: &ReduceLoudArgs, progress: &mut Progress, name: &
 
     let ch = sig.channels;
     if ch > 2 {
-        return Err(Error::Format(format!("{name}: cannot process more than 2 channels;  has {ch}")));
+        return Err(Error::Format(format!(
+            "{name}: cannot process more than 2 channels;  has {ch}"
+        )));
     }
     let bin_frames = (sig.sample_rate * args.bin_ms) / 1000;
     if bin_frames <= 0 {
@@ -103,7 +124,11 @@ pub fn run(sig: &Signal, args: &ReduceLoudArgs, progress: &mut Progress, name: &
                     total = total + ss;
                     count += n as u64;
                 }
-                Bin { gain: 1.0, peak, rms }
+                Bin {
+                    gain: 1.0,
+                    peak,
+                    rms,
+                }
             }
             Measure::Rms => {
                 let (mut s0, mut s1) = (0.0f64, 0.0f64);
@@ -136,13 +161,21 @@ pub fn run(sig: &Signal, args: &ReduceLoudArgs, progress: &mut Progress, name: &
                     total = total + sum;
                     count += n as u64;
                 }
-                Bin { gain: 1.0, peak, rms }
+                Bin {
+                    gain: 1.0,
+                    peak,
+                    rms,
+                }
             }
         };
         bins.push(bin);
         progress.update(p_lo, p_hi, Progress::frac(b, n_bins))?;
     }
-    let mean = if count == 0 { 0.0 } else { (total / count as f64).sqrt() };
+    let mean = if count == 0 {
+        0.0
+    } else {
+        (total / count as f64).sqrt()
+    };
     if mean == 0.0 {
         return Err(Error::Silent(name.to_owned()));
     }
@@ -175,7 +208,7 @@ pub fn run(sig: &Signal, args: &ReduceLoudArgs, progress: &mut Progress, name: &
     }
 
     // Pass 2: apply the interpolated boundary gains.
-    let mut out = sig.clone();
+    let mut out = sig;
     for b in 0..n_bins {
         let start = b * bin_samples;
         let end = ((b + 1) * bin_samples).min(out.data.len());
@@ -229,7 +262,14 @@ mod tests {
 
     #[test]
     fn release_ramp_shape() {
-        let mut bins = vec![Bin { gain: 1.0, peak: 0.0, rms: 0.0 }; 10];
+        let mut bins = vec![
+            Bin {
+                gain: 1.0,
+                peak: 0.0,
+                rms: 0.0
+            };
+            10
+        ];
         bins[2].gain = 0.5;
         let g = gain_curve(&bins, 0, 3);
         assert_eq!(&g[..8], &[1.0, 1.0, 0.5, 0.5, 0.625, 0.75, 0.875, 1.0]);

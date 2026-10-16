@@ -24,12 +24,24 @@ pub struct SegmentArgs {
 
 impl Default for SegmentArgs {
     fn default() -> Self {
-        SegmentArgs { quiet_delta_db: -12.0, bin_s: 0.05, tolerance: 3.5, min_segment_length: 20, max_breakpoints: 30, chunk_size: 2400 }
+        SegmentArgs {
+            quiet_delta_db: -12.0,
+            bin_s: 0.05,
+            tolerance: 3.5,
+            min_segment_length: 20,
+            max_breakpoints: 30,
+            chunk_size: 2400,
+        }
     }
 }
 
 /// Cue positions in frames (what `_06.clt` held).
-pub fn wrap_segment(rms_db: &[f64], sample_rate: i32, args: &SegmentArgs, progress: &mut Progress) -> Result<Vec<u64>, Error> {
+pub fn wrap_segment(
+    rms_db: &[f64],
+    sample_rate: i32,
+    args: &SegmentArgs,
+    progress: &mut Progress,
+) -> Result<Vec<u64>, Error> {
     if args.quiet_delta_db > 0.0 {
         return Err(Error::Other("error: quiet_delta must be negative".into()));
     }
@@ -49,7 +61,10 @@ pub fn wrap_segment(rms_db: &[f64], sample_rate: i32, args: &SegmentArgs, progre
     }
     let breakpoints = segment(&kept_val, args, progress)?;
     let hop = (sample_rate as f64 * args.bin_s) as i32 as u32;
-    Ok(breakpoints.iter().map(|&b| kept_idx[b as usize].wrapping_mul(hop) as u64).collect())
+    Ok(breakpoints
+        .iter()
+        .map(|&b| kept_idx[b as usize].wrapping_mul(hop) as u64)
+        .collect())
 }
 
 /// Prefix sums of one chunk (CalculatorData0).
@@ -79,14 +94,22 @@ impl Sums {
 
     /// RangeSSD (0x4d81c): sum of squared deviations from the mean over i..=j.
     fn ssd(&self, i: usize, j: usize) -> f64 {
-        let (s, q) = if i == 0 { (self.s[j], self.q[j]) } else { (self.s[j] - self.s[i - 1], self.q[j] - self.q[i - 1]) };
+        let (s, q) = if i == 0 {
+            (self.s[j], self.q[j])
+        } else {
+            (self.s[j] - self.s[i - 1], self.q[j] - self.q[i - 1])
+        };
         q - (s * s) / ((j - i + 1) as u16 as f64)
     }
 }
 
 fn clamp_maxbp(maxbp: u16, chunk: u16, minseg: u16) -> u16 {
     let lim = (chunk / minseg).wrapping_sub(1);
-    if maxbp == 0 { lim } else { maxbp.min(lim) }
+    if maxbp == 0 {
+        lim
+    } else {
+        maxbp.min(lim)
+    }
 }
 
 /// Breakpoints (segment start indices into `x`, chunk starts included, 0 omitted).
@@ -94,8 +117,16 @@ pub fn segment(x: &[f64], args: &SegmentArgs, progress: &mut Progress) -> Result
     let n_total = x.len() as u32;
     let minseg = args.min_segment_length.max(1);
     let tol = args.tolerance;
-    let c: u16 = if (args.chunk_size as u32) <= n_total { args.chunk_size } else { n_total as u16 };
-    let (nchunks, mut chunk) = if c == 0 { (1u32, n_total as u16) } else { ((n_total - 1 + c as u32) / c as u32, c) };
+    let c: u16 = if (args.chunk_size as u32) <= n_total {
+        args.chunk_size
+    } else {
+        n_total as u16
+    };
+    let (nchunks, mut chunk) = if c == 0 {
+        (1u32, n_total as u16)
+    } else {
+        ((n_total - 1 + c as u32) / c as u32, c)
+    };
     let mut maxbp = clamp_maxbp(args.max_breakpoints, chunk, minseg);
 
     let mut out = Vec::new();
@@ -123,8 +154,8 @@ pub fn segment(x: &[f64], args: &SegmentArgs, progress: &mut Progress) -> Result
         let mut k: u16 = 0;
         while k <= maxbp && err > tol {
             if k == 0 {
-                for j in (m - 1)..n {
-                    best[j] = sums.ssd(0, j);
+                for (j, b) in best.iter_mut().enumerate().take(n).skip(m - 1) {
+                    *b = sums.ssd(0, j);
                 }
             } else {
                 let bi = &mut best_i[k as usize];
@@ -166,7 +197,15 @@ pub fn segment(x: &[f64], args: &SegmentArgs, progress: &mut Progress) -> Result
         }
         out.extend(gl.into_iter().filter(|&g| g != 0));
         offset += n as u32;
-        progress.update(35.0, 69.0, if nchunks == 1 { 1.0 } else { ci as f64 / (nchunks - 1) as f64 })?;
+        progress.update(
+            35.0,
+            69.0,
+            if nchunks == 1 {
+                1.0
+            } else {
+                ci as f64 / (nchunks - 1) as f64
+            },
+        )?;
     }
     Ok(out)
 }
@@ -194,6 +233,8 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut cb = |_| {};
         let mut p = Progress::new(&mut cb, &cancel);
-        assert!(segment(&x, &SegmentArgs::default(), &mut p).unwrap().is_empty());
+        assert!(segment(&x, &SegmentArgs::default(), &mut p)
+            .unwrap()
+            .is_empty());
     }
 }
