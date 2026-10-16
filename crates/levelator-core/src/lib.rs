@@ -6,6 +6,8 @@
 #![allow(clippy::assign_op_pattern, clippy::neg_cmp_op_on_partial_ord)]
 
 pub mod audio;
+mod codecs;
+pub mod denoise;
 pub mod dsp;
 pub mod stages;
 

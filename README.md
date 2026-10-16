@@ -11,7 +11,9 @@ with [REA](https://github.com/morluto/rea) and Ghidra. See
 [docs/reverse-engineering](docs/reverse-engineering/README.md) for the full
 analysis and per-stage specs.
 
-It runs on **Windows, macOS and Linux**.
+It runs on **Windows, macOS and Linux**, and adds a few things the original
+never had: background-noise reduction, and support for FLAC, MP3, M4A and
+Ogg Vorbis besides WAV/AIFF.
 
 ## Download
 
@@ -31,32 +33,62 @@ and choose **Open**.
 
 ### Desktop app
 
-Run `levelator`, then drag WAV or AIFF files onto the window. You can also
+Run `levelator`, then drag audio files onto the window. You can also
 double-click the window or press Ctrl/Cmd+O to pick files. Each file is
-levelled in turn and written next to the original as `name.output.wav`.
+levelled in turn and written next to the original as `name.output.<ext>`.
+The **Noise reduction** and **Output** pickers apply to files added after
+you change them.
 Files passed on the command line (`levelator a.wav b.aiff`) are processed and
 the app then quits, as in the original's batch mode.
 
 ### Command line
 
 ```sh
-level talk.wav                     # writes talk.output.wav
-level talk.aiff levelled.aiff      # explicit output path
-level talk.wav out.wav -b 16       # force 16-bit output
-level --target-level -16 talk.wav  # louder target (default -18 dB)
+level talk.wav                       # writes talk.output.wav
+level talk.mp3                       # writes talk.output.mp3 (192 kbit/s)
+level talk.wav -f flac               # convert: writes talk.output.flac
+level talk.m4a -f mp3 --mp3-bitrate 128
+level talk.wav --denoise strong      # off | mild (default) | medium | strong
+level talk.wav --denoise off         # exactly the original Levelator processing
+level talk.wav out.wav -b 16         # force 16-bit output
+level --target-level -16 talk.wav    # louder target (default -18 dB)
 ```
 
 `level` prints `NN%` progress on stdout like the original engine. It also
 accepts and ignores the original's third "key" argument, so old wrappers keep
 working.
 
-Input and output: uncompressed WAV, AIFF and AIFF-C (8/16/24/32-bit PCM or
-32-bit float), mono or stereo. The output keeps the input's format. MP3 isn't
+### Formats
+
+| Format | Read | Write | Notes |
+|---|---|---|---|
+| WAV, AIFF / AIFF-C | ✓ | ✓ | 8/16/24/32-bit PCM or 32-bit float |
+| FLAC | ✓ | ✓ | Lossless; written at 16 or 24 bits |
+| MP3 | ✓ | ✓ | Written with LAME, constant bitrate (`--mp3-bitrate`, default 192 kbit/s), gapless |
+| Ogg Vorbis | ✓ | ✓ | Quality-based VBR (`--ogg-quality`, default 0.5 ≈ 160 kbit/s) |
+| M4A / MP4 (AAC, ALAC) | ✓ | — | No AAC encoder: AAC is written as MP3, ALAC as FLAC (or pick a format) |
+| Opus | — | — | Not supported yet |
+
+By default the output uses the input's format. Mono and stereo files are
 supported, as in the original.
+
+### Noise reduction
+
+Before levelling, a gentle spectral (Wiener) filter turns down steady
+background noise such as hiss, static, fans or air conditioning. It learns
+the noise from the pauses in the recording and never cuts more than 12 dB at
+the default **mild** setting (18 dB **medium**, 24 dB **strong**), so voices
+keep their natural sound. Files with no real pauses, or with already silent
+pauses, are left untouched. Use `--denoise off` (or **Off** in the app) for
+exactly the original Levelator's processing.
+
+In a test with a hiss floor of -50 dBFS, mild lowered the hiss in the pauses
+by about 12 dB and changed the speech level by less than 0.1 dB.
 
 ## How it works
 
-Ten stages, each a port of one of the original's sub-programs:
+After the optional noise reduction, ten stages run, each a port of one of
+the original's sub-programs:
 
 1. **High-pass** at 62.5 Hz (2nd-order, 2-octave bandwidth) to remove rumble
 2. **Noise gate**: −12 dB downward gate with 250 ms look-ahead; threshold set from the file's own level
@@ -79,13 +111,17 @@ cargo build --release          # target/release/level and target/release/levelat
 cargo test --workspace
 ```
 
+A C compiler is needed for the bundled LAME (MP3) and libvorbis sources. On
+macOS and Linux, LAME is built with its own `./configure`, so `make` is
+needed too.
+
 On Linux the GUI needs the usual X11/Wayland and OpenGL libraries at runtime.
 To build it you need `libxkbcommon-dev` and `libgtk-3-dev` (used by the file
 dialog).
 
 | Crate | Purpose |
 |---|---|
-| `crates/levelator-core` | The engine: audio I/O and the ten-stage pipeline |
+| `crates/levelator-core` | The engine: audio I/O, codecs, noise reduction and the ten-stage pipeline |
 | `crates/level-cli` | `level` command-line tool |
 | `crates/levelator-gui` | `levelator` drag-and-drop desktop app (egui) |
 
@@ -108,3 +144,8 @@ This is an independent, clean-room reimplementation for interoperability and
 preservation. It is not affiliated with or endorsed by The Conversations
 Network, GigaVox Media or Singular Software. "The Levelator" is their name for
 the original product. No code or assets from the original are included.
+
+MP3 encoding uses [LAME](https://lame.sourceforge.io/) (LGPL), statically
+linked; its source is in the `mp3lame-sys` crate, and this program's full
+source is in this repository, so the binaries can be rebuilt against a
+modified LAME. Ogg Vorbis encoding uses libvorbis/aoTuV (BSD).

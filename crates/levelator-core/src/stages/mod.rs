@@ -77,6 +77,9 @@ impl Signal {
 /// The shared cancel flag is checked on every update.
 pub struct Progress<'a> {
     last: i64,
+    /// Overall range the stage percentages (0..=100) are mapped onto.
+    lo: f64,
+    hi: f64,
     callback: &'a mut dyn FnMut(u32),
     cancel: &'a AtomicBool,
 }
@@ -85,9 +88,18 @@ impl<'a> Progress<'a> {
     pub fn new(callback: &'a mut dyn FnMut(u32), cancel: &'a AtomicBool) -> Self {
         Progress {
             last: -1,
+            lo: 0.0,
+            hi: 100.0,
             callback,
             cancel,
         }
+    }
+
+    /// Map later stage percentages onto `lo..=hi` of the reported progress
+    /// (used when an extra step runs before the original pipeline).
+    pub fn set_range(&mut self, lo: f64, hi: f64) {
+        self.lo = lo;
+        self.hi = hi;
     }
 
     /// `b / (n - 1)`, or 1.0 when there is a single step.
@@ -103,7 +115,8 @@ impl<'a> Progress<'a> {
         if self.cancel.load(Ordering::Relaxed) {
             return Err(Error::Cancelled);
         }
-        let pct = (start + (end - start) * frac).floor() as i64;
+        let stage = start + (end - start) * frac;
+        let pct = (self.lo + stage * (self.hi - self.lo) / 100.0).floor() as i64;
         if pct > self.last {
             self.last = pct;
             (self.callback)(pct.clamp(0, 100) as u32);

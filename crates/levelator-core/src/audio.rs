@@ -1,4 +1,5 @@
-//! Audio file I/O for WAV and AIFF/AIFF-C.
+//! Audio file I/O. WAV and AIFF/AIFF-C are read and written here, exactly as
+//! the original engine saw them; other formats go through [`crate::codecs`].
 //!
 //! The original engine used libsndfile and worked on normalised `double`
 //! samples. The integer <-> float scaling here follows libsndfile's
@@ -10,13 +11,88 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+pub use crate::codecs::EncodeOptions;
 use crate::Error;
 
 /// Container format of an audio file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Container {
     Wav,
     Aiff,
+    Flac,
+    Mp3,
+    /// Ogg Vorbis.
+    Ogg,
+    /// MP4/M4A with AAC or ALAC (read only).
+    M4a,
+}
+
+impl Container {
+    /// Formats that can be written.
+    pub const WRITABLE: [Container; 5] = [
+        Container::Wav,
+        Container::Aiff,
+        Container::Flac,
+        Container::Mp3,
+        Container::Ogg,
+    ];
+
+    pub fn extension(self) -> &'static str {
+        match self {
+            Container::Wav => "wav",
+            Container::Aiff => "aiff",
+            Container::Flac => "flac",
+            Container::Mp3 => "mp3",
+            Container::Ogg => "ogg",
+            Container::M4a => "m4a",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Container::Wav => "WAV",
+            Container::Aiff => "AIFF",
+            Container::Flac => "FLAC",
+            Container::Mp3 => "MP3",
+            Container::Ogg => "Ogg Vorbis",
+            Container::M4a => "M4A",
+        }
+    }
+
+    /// Parse a format name or file extension (`"flac"`, `"aif"`, `"ogg"`, ...).
+    pub fn from_name(s: &str) -> Option<Container> {
+        match s.to_ascii_lowercase().trim_start_matches('.') {
+            "wav" | "wave" => Some(Container::Wav),
+            "aiff" | "aif" | "aifc" => Some(Container::Aiff),
+            "flac" => Some(Container::Flac),
+            "mp3" => Some(Container::Mp3),
+            "ogg" | "oga" | "vorbis" => Some(Container::Ogg),
+            "m4a" | "mp4" | "aac" | "alac" => Some(Container::M4a),
+            _ => None,
+        }
+    }
+
+    pub fn is_lossy(self) -> bool {
+        matches!(self, Container::Mp3 | Container::Ogg)
+    }
+}
+
+/// File extensions the reader accepts (for file dialogs and drag-and-drop).
+pub const READABLE_EXTENSIONS: &[&str] = &[
+    "wav", "aiff", "aif", "aifc", "flac", "mp3", "ogg", "oga", "m4a", "mp4",
+];
+
+/// The container to write for `input` when the caller asked for `requested`
+/// (`None` = same as the input). M4A can't be written: lossless ALAC becomes
+/// FLAC and lossy AAC becomes MP3.
+pub fn output_container(input: &AudioFormat, requested: Option<Container>) -> Container {
+    match requested.unwrap_or(input.container) {
+        Container::M4a => match input.encoding {
+            Encoding::Pcm(_) => Container::Flac,
+            Encoding::Float(_) => Container::Mp3,
+        },
+        c => c,
+    }
 }
 
 /// Sample encoding of an audio file.
@@ -87,7 +163,7 @@ fn write_scale(bits: u16) -> f64 {
 /// `lrint(x * 32767)` for 16-bit, and for 24/32-bit `lrint(x * 0x7FFFFFFF)`
 /// with 24-bit keeping the top three bytes (arithmetic shift). Results are
 /// clipped to the valid range.
-fn to_int(x: f64, bits: u16) -> i32 {
+pub(crate) fn to_int(x: f64, bits: u16) -> i32 {
     let clip = |v: f64, b: u16| {
         let max = ((1i64 << (b - 1)) - 1) as f64;
         let min = -((1i64 << (b - 1)) as f64);
@@ -109,35 +185,46 @@ pub fn quantize(x: f64, encoding: Encoding) -> f64 {
     }
 }
 
-/// Detect the container from the first bytes of a file.
-pub fn sniff(path: &Path) -> Result<Container, Error> {
+/// `Some(Wav | Aiff)` if the file starts with a WAV or AIFF header.
+fn sniff_pcm(path: &Path) -> Result<Option<Container>, Error> {
     let mut f = File::open(path).map_err(|e| Error::open_input(path, e))?;
     let mut magic = [0u8; 12];
-    f.read_exact(&mut magic)
-        .map_err(|_| Error::Format(format!("{}: file too short", path.display())))?;
-    match (&magic[0..4], &magic[8..12]) {
-        (b"RIFF", b"WAVE") | (b"RIFX", b"WAVE") => Ok(Container::Wav),
-        (b"FORM", b"AIFF") | (b"FORM", b"AIFC") => Ok(Container::Aiff),
-        _ => Err(Error::Format(format!(
-            "{}: not a WAV or AIFF file",
-            path.display()
-        ))),
+    if f.read_exact(&mut magic).is_err() {
+        return Err(Error::Format(format!("{}: file too short", path.display())));
+    }
+    Ok(match (&magic[0..4], &magic[8..12]) {
+        (b"RIFF", b"WAVE") | (b"RIFX", b"WAVE") => Some(Container::Wav),
+        (b"FORM", b"AIFF") | (b"FORM", b"AIFC") => Some(Container::Aiff),
+        _ => None,
+    })
+}
+
+/// Read any supported file into normalised interleaved doubles.
+pub fn read(path: &Path) -> Result<AudioBuffer, Error> {
+    match sniff_pcm(path)? {
+        Some(Container::Wav) => read_wav(path),
+        Some(Container::Aiff) => read_aiff(path),
+        _ => crate::codecs::decode(path),
     }
 }
 
-/// Read a WAV or AIFF file into normalised doubles.
-pub fn read(path: &Path) -> Result<AudioBuffer, Error> {
-    match sniff(path)? {
-        Container::Wav => read_wav(path),
-        Container::Aiff => read_aiff(path),
-    }
+/// Write `buf` to `path` using `buf.format` and default encoder settings.
+pub fn write(path: &Path, buf: &AudioBuffer) -> Result<(), Error> {
+    write_with(path, buf, &EncodeOptions::default())
 }
 
 /// Write `buf` to `path` using `buf.format`.
-pub fn write(path: &Path, buf: &AudioBuffer) -> Result<(), Error> {
+pub fn write_with(path: &Path, buf: &AudioBuffer, opts: &EncodeOptions) -> Result<(), Error> {
     match buf.format.container {
         Container::Wav => write_wav(path, buf),
         Container::Aiff => write_aiff(path, buf),
+        Container::Flac => crate::codecs::write_flac(path, buf),
+        Container::Mp3 => crate::codecs::write_mp3(path, buf, opts),
+        Container::Ogg => crate::codecs::write_ogg(path, buf, opts),
+        Container::M4a => Err(Error::Write(format!(
+            "{}: writing M4A is not supported",
+            path.display()
+        ))),
     }
 }
 

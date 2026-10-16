@@ -1,6 +1,8 @@
 //! Desktop front-end, modelled on the original wxPython Levelator window:
-//! drop WAV/AIFF files onto the window (or double-click / Ctrl+O to browse);
+//! drop audio files onto the window (or double-click / Ctrl+O to browse);
 //! each is levelled in turn and written next to the source as `name.output.ext`.
+//! Unlike the original it also takes FLAC/MP3/M4A/Ogg, can reduce background
+//! noise first, and can convert the output format.
 //! Files given on the command line are processed and the app then quits
 //! (the original "batch mode").
 
@@ -13,13 +15,15 @@ use std::sync::Arc;
 use std::thread;
 
 use eframe::egui;
+use levelator_core::audio::{Container, READABLE_EXTENSIONS};
+use levelator_core::denoise::Strength;
 use levelator_core::{level_file, output_path_for, Settings};
 
-const DRAG_DROP: &str = "Drag and drop a WAV or AIFF file.";
+const DRAG_DROP: &str = "Drag and drop audio files here.";
 const TITLE: &str = "The Levelator";
 
 enum Job {
-    File(PathBuf),
+    File(PathBuf, Box<Settings>),
     /// Sent after the command-line files: quit once everything before it is done.
     BatchQuit,
 }
@@ -41,6 +45,8 @@ struct LevelatorApp {
     pending: usize,
     message: Option<String>,
     last_dir: Option<PathBuf>,
+    noise_reduction: Option<Strength>,
+    output_format: Option<Container>,
 }
 
 impl LevelatorApp {
@@ -60,6 +66,8 @@ impl LevelatorApp {
             pending: 0,
             message: None,
             last_dir: None,
+            noise_reduction: Settings::default().noise_reduction,
+            output_format: None,
         };
         let batch = !initial.is_empty();
         for path in initial {
@@ -78,12 +86,11 @@ impl LevelatorApp {
             .and_then(|e| e.to_str())
             .map(str::to_ascii_lowercase)
             .unwrap_or_default();
-        if ext == "mp3" {
-            self.message = Some(
-                "The Levelator cannot be used to process MP3 files. Only uncompressed audio \
-                 files (eg, WAV, AIFF) are supported."
-                    .to_owned(),
-            );
+        if !READABLE_EXTENSIONS.contains(&ext.as_str()) {
+            self.message = Some(format!(
+                "Unsupported file type: {}\nSupported: WAV, AIFF, FLAC, MP3, M4A (AAC/ALAC), Ogg Vorbis.",
+                path.display()
+            ));
             return;
         }
         if !path.is_file() || std::fs::File::open(&path).is_err() {
@@ -91,15 +98,23 @@ impl LevelatorApp {
             return;
         }
         self.pending += 1;
-        let _ = self.jobs.send(Job::File(path));
+        let settings = Settings {
+            noise_reduction: self.noise_reduction,
+            output_format: self.output_format,
+            ..Settings::default()
+        };
+        let _ = self.jobs.send(Job::File(path, Box::new(settings)));
     }
 
     fn open_dialog(&mut self) {
         let mut dialog = rfd::FileDialog::new()
             .set_title("Choose a file")
-            .add_filter("All audio files", &["wav", "aiff", "aif", "aifc"])
-            .add_filter("Microsoft WAV (*.wav)", &["wav"])
-            .add_filter("Apple AIFF (*.aiff)", &["aiff", "aif", "aifc"])
+            .add_filter("All audio files", READABLE_EXTENSIONS)
+            .add_filter("WAV / AIFF", &["wav", "aiff", "aif", "aifc"])
+            .add_filter("FLAC", &["flac"])
+            .add_filter("MP3", &["mp3"])
+            .add_filter("M4A (AAC / ALAC)", &["m4a", "mp4"])
+            .add_filter("Ogg Vorbis", &["ogg", "oga"])
             .add_filter("All files (*.*)", &["*"]);
         if let Some(dir) = &self.last_dir {
             dialog = dialog.set_directory(dir);
@@ -141,6 +156,42 @@ impl LevelatorApp {
     }
 }
 
+impl LevelatorApp {
+    /// Noise-reduction and output-format pickers; they apply to files queued afterwards.
+    fn options_row(&mut self, ui: &mut egui::Ui) {
+        let label = |t: &str| egui::RichText::new(t).color(egui::Color32::GRAY);
+        ui.horizontal(|ui| {
+            ui.label(label("Noise reduction"));
+            egui::ComboBox::from_id_salt("noise")
+                .selected_text(self.noise_reduction.map_or("Off", strength_label))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.noise_reduction, None, "Off");
+                    for s in [Strength::Mild, Strength::Medium, Strength::Strong] {
+                        ui.selectable_value(&mut self.noise_reduction, Some(s), strength_label(s));
+                    }
+                });
+            ui.add_space(8.0);
+            ui.label(label("Output"));
+            egui::ComboBox::from_id_salt("format")
+                .selected_text(self.output_format.map_or("Same as input", Container::name))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.output_format, None, "Same as input");
+                    for c in Container::WRITABLE {
+                        ui.selectable_value(&mut self.output_format, Some(c), c.name());
+                    }
+                });
+        });
+    }
+}
+
+fn strength_label(s: Strength) -> &'static str {
+    match s {
+        Strength::Mild => "Mild",
+        Strength::Medium => "Medium",
+        Strength::Strong => "Strong",
+    }
+}
+
 fn spawn_worker(
     jobs: Receiver<Job>,
     events: Sender<Event>,
@@ -151,8 +202,8 @@ fn spawn_worker(
         .name("Levelator".into())
         .spawn(move || {
             for job in jobs {
-                let input = match job {
-                    Job::File(p) => p,
+                let (input, settings) = match job {
+                    Job::File(p, s) => (p, s),
                     Job::BatchQuit => {
                         let _ = events.send(Event::BatchQuit);
                         ctx.request_repaint();
@@ -175,15 +226,9 @@ fn spawn_worker(
                         ctx.request_repaint();
                     }
                 };
-                let result = level_file(
-                    &input,
-                    &output,
-                    &Settings::default(),
-                    &mut progress,
-                    &cancel,
-                );
+                let result = level_file(&input, &output, &settings, &mut progress, &cancel);
                 let _ = events.send(match result {
-                    Ok(()) => Event::Done,
+                    Ok(_) => Event::Done,
                     Err(e) => Event::Failed {
                         message: format!("Level reports: {e}"),
                     },
@@ -305,6 +350,8 @@ impl eframe::App for LevelatorApp {
                         .small()
                         .color(egui::Color32::DARK_GRAY),
                 );
+                ui.add_space(12.0);
+                self.options_row(ui);
             });
         });
 
@@ -336,7 +383,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(TITLE)
-            .with_inner_size([420.0, 220.0])
+            .with_inner_size([440.0, 270.0])
             .with_resizable(false)
             .with_drag_and_drop(true),
         ..Default::default()

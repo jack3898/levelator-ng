@@ -7,5 +7,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+flacenc = { version = "0.5.1", default-features = false, features = ["par"] }
 hound = "3.5.1"
+mp3lame-encoder = "0.2.5"
+realfft = "3.5.0"
+symphonia = { version = "0.6.1", default-features = false, features = ["flac", "mp3", "aac", "isomp4", "alac", "ogg", "vorbis", "id3v1", "id3v2", "opt-simd"] }
 thiserror = "2"
+vorbis_rs = "0.5.6"
