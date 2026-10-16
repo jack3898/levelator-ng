@@ -1,6 +1,8 @@
 //! Clean-room Rust reimplementation of the Levelator 2.1.2 engine.
 
 pub mod audio;
+pub mod dsp;
+pub mod stages;
 
 use std::path::Path;
 

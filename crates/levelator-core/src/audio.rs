@@ -81,13 +81,31 @@ fn write_scale(bits: u16) -> f64 {
     ((1u64 << (bits - 1)) - 1) as f64
 }
 
-/// Convert a normalised double to an integer sample of `bits` bits
-/// (libsndfile `lrint(x * (2^(bits-1)-1))`, clipped to the valid range).
+/// Convert a normalised double to an integer sample of `bits` bits the way
+/// libsndfile 1.0.21 does with normalisation on: `lrint(x * 127)` for 8-bit,
+/// `lrint(x * 32767)` for 16-bit, and for 24/32-bit `lrint(x * 0x7FFFFFFF)`
+/// with 24-bit keeping the top three bytes (arithmetic shift). Results are
+/// clipped to the valid range.
 fn to_int(x: f64, bits: u16) -> i32 {
-    let max = ((1i64 << (bits - 1)) - 1) as f64;
-    let min = -((1i64 << (bits - 1)) as f64);
-    let v = (x * write_scale(bits)).round_ties_even();
-    v.clamp(min, max) as i32
+    let clip = |v: f64, b: u16| {
+        let max = ((1i64 << (b - 1)) - 1) as f64;
+        let min = -((1i64 << (b - 1)) as f64);
+        v.clamp(min, max) as i32
+    };
+    match bits {
+        24 => clip((x * 2147483647.0).round_ties_even(), 32) >> 8,
+        _ => clip((x * write_scale(bits)).round_ties_even(), bits),
+    }
+}
+
+/// The value a sample has after being written to and read back from a file
+/// with this encoding (one temp-file round trip in the original pipeline).
+pub fn quantize(x: f64, encoding: Encoding) -> f64 {
+    match encoding {
+        Encoding::Pcm(bits) => to_int(x, bits) as f64 * read_scale(bits),
+        Encoding::Float(32) => x as f32 as f64,
+        Encoding::Float(_) => x,
+    }
 }
 
 /// Detect the container from the first bytes of a file.
@@ -403,6 +421,9 @@ mod tests {
         assert_eq!(to_int(-2.0, 16), -32768);
         assert_eq!(to_int(0.5, 16), 16384); // 16383.5 rounds to even
         assert_eq!(read_scale(16), 1.0 / 32768.0);
+        assert_eq!(to_int(1.0, 24), 8388607);
+        assert_eq!(to_int(-1.0, 24), -8388608);
+        assert_eq!(to_int(0.25, 8), 32);
     }
 
     fn roundtrip(container: Container, encoding: Encoding) {
