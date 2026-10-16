@@ -11,9 +11,76 @@ with [REA](https://github.com/morluto/rea) and Ghidra. See
 [docs/reverse-engineering](docs/reverse-engineering/README.md) for the full
 analysis and per-stage specs.
 
-It runs on **Windows, macOS and Linux**, and adds a few things the original
-never had: background-noise reduction, and support for FLAC, MP3, M4A and
-Ogg Vorbis besides WAV/AIFF.
+It runs on **Windows, macOS and Linux**. The levelling engine is a faithful
+port, and a few extras the original never had are added on top: background
+noise reduction, and support for FLAC, MP3, M4A and Ogg Vorbis besides
+WAV/AIFF. **Noise reduction is on by default, so out of the box the output is
+not identical to Levelator 2.1.2.** See
+[how it compares to the original](#how-it-compares-to-the-original) and
+[getting the original behaviour](#getting-the-original-behaviour).
+
+## How it compares to the original
+
+### The core: a faithful port
+
+The ten-stage levelling engine (high-pass, noise gate, loudness reduction,
+segmentation, per-segment gains, smoothing and normalisation) is ported
+operation by operation from the original `level` binary. It uses the same
+algorithms, the same hard-coded settings and the same order of floating-point
+operations, and it reproduces the rounding the original's temporary files
+caused between stages. The aim is that, for a WAV or AIFF file with the extras
+switched off, the output matches what Levelator 2.1.2 produced.
+
+That aim is not verified sample by sample. The original is a 2010 Mac binary
+that can't be run alongside this port, so fidelity rests on the static
+analysis documented in [docs/reverse-engineering](docs/reverse-engineering/README.md).
+
+### Extras (not in the original)
+
+| Extra | Default | Changes the sound? | Original behaviour |
+|---|---|---|---|
+| **Background noise reduction** before levelling | **On (mild)** | **Yes**: steady hiss and hum are turned down, by up to 12 dB at mild | `--denoise off`, or **Off** in the app |
+| Reading FLAC, MP3, M4A (AAC/ALAC) and Ogg Vorbis | — | No: it only decodes them. The original accepted only WAV/AIFF and refused MP3 | Use WAV/AIFF input |
+| Writing FLAC, MP3 and Ogg Vorbis, and converting between formats | Same format as the input | Only through the codec itself: MP3 and Ogg are lossy | Keep **Output: Same as input** (the default) |
+| `--target-level`, `--bit-depth`, `--mp3-bitrate`, `--ogg-quality` options | The original's values (−18 dB, keep the input's bit depth) | Only if you change them | Leave them at their defaults |
+| Noise-reduction and output-format pickers in the app | — | Through the settings above | — |
+
+When noise reduction is on, it takes the first 10% of the progress bar, and
+the original stages' percentages are scaled into the remaining 90%.
+
+### Small deliberate differences in the core
+
+These apply even with every extra switched off:
+
+- **Clipping instead of wrap-around.** If a sample would exceed full scale
+  when written, it is clipped. The original's libsndfile 1.0.21 wrapped it
+  around, producing a loud click. The original's own peak limiting means
+  this almost never happens.
+- **No endless loop.** The original's final normalise step could hang forever
+  on unusual input. The port stops after 1000 iterations and keeps the
+  last result.
+- **In memory, not temp files.** The original wrote ten temporary files to
+  disk. The port keeps everything in memory but rounds the samples and
+  numbers exactly as those files did.
+- **Output naming fix.** `talk.wav` → `talk.output.wav` as before. The
+  original split the whole path on `.`, which broke for folders with a dot in
+  their name. The port only looks at the file name.
+- **No licence handshake.** The original GUI passed the engine a time-based
+  MD5 "key" so nothing else could run it. `level` accepts that argument and
+  ignores it.
+- **No network access.** The original app checked conversationsnetwork.org
+  for updates and news. That site is gone, so this was dropped. Usage logging
+  and FTP upload code was compiled into the original but disabled, and it was
+  not ported.
+- **Floating-point libraries.** `sin`, `cos`, `pow` and `log10` on modern
+  systems can differ from 2010's macOS in the last bit. The effect is far
+  below anything audible.
+
+### Getting the original behaviour
+
+- **App:** set **Noise reduction** to **Off**, keep **Output** at **Same as
+  input**, and use WAV or AIFF files.
+- **Command line:** `level --denoise off talk.wav`
 
 ## Download
 
@@ -49,7 +116,7 @@ level talk.mp3                       # writes talk.output.mp3 (192 kbit/s)
 level talk.wav -f flac               # convert: writes talk.output.flac
 level talk.m4a -f mp3 --mp3-bitrate 128
 level talk.wav --denoise strong      # off | mild (default) | medium | strong
-level talk.wav --denoise off         # exactly the original Levelator processing
+level talk.wav --denoise off         # original Levelator processing, no extras
 level talk.wav out.wav -b 16         # force 16-bit output
 level --target-level -16 talk.wav    # louder target (default -18 dB)
 ```
@@ -72,7 +139,10 @@ working.
 By default the output uses the input's format. Mono and stereo files are
 supported, as in the original.
 
-### Noise reduction
+### Noise reduction (extra)
+
+This is not part of the original Levelator; see
+[how it compares to the original](#how-it-compares-to-the-original).
 
 Before levelling, a gentle spectral (Wiener) filter turns down steady
 background noise such as hiss, static, fans or air conditioning. It learns
@@ -87,8 +157,8 @@ by about 12 dB and changed the speech level by less than 0.1 dB.
 
 ## How it works
 
-After the optional noise reduction, ten stages run, each a port of one of
-the original's sub-programs:
+First, if enabled, the noise reduction (an extra). Then the ten stages of
+the original engine run, each a port of one of the original's sub-programs:
 
 1. **High-pass** at 62.5 Hz (2nd-order, 2-octave bandwidth) to remove rumble
 2. **Noise gate**: −12 dB downward gate with 250 ms look-ahead; threshold set from the file's own level
