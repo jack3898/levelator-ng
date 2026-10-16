@@ -1,0 +1,15 @@
+[package]
+name = "level"
+description = "Command-line Levelator: level the loudness of a WAV/AIFF file"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "level"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+levelator-core = { path = "../levelator-core" }

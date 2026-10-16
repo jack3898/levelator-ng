@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/levelator-core", "crates/level-cli", "crates/levelator-gui"]
+
+[workspace.package]
+version = "2.1.2"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/jack3898/levelator-reverse-engineer"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

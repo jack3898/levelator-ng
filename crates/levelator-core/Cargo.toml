@@ -1,0 +1,11 @@
+[package]
+name = "levelator-core"
+description = "Clean-room Rust reimplementation of the Levelator 2.1.2 loudness-levelling engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hound = "3.5.1"
+thiserror = "2"
