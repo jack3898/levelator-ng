@@ -47,9 +47,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - name: Linux GUI dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libgtk-3-dev
       - name: Build
         run: cargo build --workspace --release --locked --target ${{ matrix.target }}
 

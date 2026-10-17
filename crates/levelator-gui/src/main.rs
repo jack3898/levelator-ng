@@ -380,7 +380,8 @@ fn main() -> eframe::Result {
         .map(PathBuf::from)
         .filter(|p| !is_psn_arg(p))
         .collect();
-    let options = eframe::NativeOptions {
+    #[allow(unused_mut)]
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(TITLE)
             .with_inner_size([440.0, 270.0])
@@ -388,11 +389,83 @@ fn main() -> eframe::Result {
             .with_drag_and_drop(true),
         ..Default::default()
     };
-    eframe::run_native(
+    #[cfg(target_os = "linux")]
+    linux::choose_backend(&mut options);
+
+    let result = eframe::run_native(
         TITLE,
         options,
         Box::new(|cc| Ok(Box::new(LevelatorApp::new(cc.egui_ctx.clone(), initial)))),
-    )
+    );
+    #[cfg(target_os = "linux")]
+    if result.is_err() {
+        linux::print_help();
+    }
+    result
+}
+
+/// Linux display-server selection.
+///
+/// winit picks Wayland whenever `WAYLAND_DISPLAY` is set and then fails hard
+/// if Wayland can't actually be used: `libwayland-client` not installed
+/// ("NoWaylandLib"), or no compositor behind the socket ("NoCompositor"),
+/// as happens under WSL or minimal installs. In that case, fall back to X11
+/// (including XWayland) when `DISPLAY` is available.
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::path::PathBuf;
+
+    use winit::platform::x11::EventLoopBuilderExtX11;
+
+    fn env_set(name: &str) -> bool {
+        std::env::var_os(name).is_some_and(|v| !v.is_empty())
+    }
+
+    fn wayland_lib_available() -> bool {
+        // SAFETY: loading libwayland-client only runs its (side-effect free)
+        // initialisers; the handle is dropped straight away.
+        unsafe { libloading::Library::new("libwayland-client.so.0") }.is_ok()
+    }
+
+    fn wayland_socket_exists() -> bool {
+        let Some(display) = std::env::var_os("WAYLAND_DISPLAY") else {
+            return false;
+        };
+        let path = PathBuf::from(&display);
+        if path.is_absolute() {
+            return path.exists();
+        }
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .is_some_and(|dir| PathBuf::from(dir).join(path).exists())
+    }
+
+    pub fn choose_backend(options: &mut eframe::NativeOptions) {
+        if !env_set("WAYLAND_DISPLAY") || !env_set("DISPLAY") {
+            return;
+        }
+        let reason = if !wayland_lib_available() {
+            "libwayland-client is not installed"
+        } else if !wayland_socket_exists() {
+            "no Wayland compositor is running"
+        } else {
+            return;
+        };
+        eprintln!("levelator: {reason}; using X11 instead");
+        options.event_loop_builder = Some(Box::new(|builder| {
+            builder.with_x11();
+        }));
+    }
+
+    pub fn print_help() {
+        eprintln!(
+            "\nlevelator could not open a window. On Linux it needs a Wayland or X11 desktop and these libraries:\n  \
+             Debian/Ubuntu: sudo apt install libwayland-client0 libxkbcommon0 libxkbcommon-x11-0 libx11-6 libxcursor1 libxrandr2 libxi6 libgl1 libegl1\n  \
+             Fedora:        sudo dnf install libwayland-client libxkbcommon libxkbcommon-x11 libX11 libXcursor libXrandr libXi mesa-libGL mesa-libEGL\n  \
+             Arch:          sudo pacman -S wayland libxkbcommon libxkbcommon-x11 libx11 libxcursor libxrandr libxi mesa\n\
+             To force X11, run: env -u WAYLAND_DISPLAY levelator\n\
+             The command-line tool `level` needs none of these."
+        );
+    }
 }
 
 /// macOS Finder passes `-psn_0_12345` to apps launched from older systems.

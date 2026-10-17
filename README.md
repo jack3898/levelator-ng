@@ -108,6 +108,30 @@ you change them.
 Files passed on the command line (`levelator a.wav b.aiff`) are processed and
 the app then quits, as in the original's batch mode.
 
+### Linux desktop requirements
+
+The `levelator` app opens its window through Wayland or X11, and loads the
+needed libraries when it starts. Most desktops already have them. On a
+minimal install or WSL, install them with:
+
+```sh
+# Debian / Ubuntu
+sudo apt install libwayland-client0 libxkbcommon0 libxkbcommon-x11-0 libx11-6 libxcursor1 libxrandr2 libxi6 libgl1 libegl1
+# Fedora
+sudo dnf install libwayland-client libxkbcommon libxkbcommon-x11 libX11 libXcursor libXrandr libXi mesa-libGL mesa-libEGL
+# Arch
+sudo pacman -S wayland libxkbcommon libxkbcommon-x11 libx11 libxcursor libxrandr libxi mesa
+```
+
+If `WAYLAND_DISPLAY` is set but Wayland can't be used (the library is
+missing, or no compositor is running, as can happen under WSL), the app falls
+back to X11 automatically when `DISPLAY` is set. To force X11 yourself, run
+`env -u WAYLAND_DISPLAY levelator`.
+
+The open-file dialog (double-click or Ctrl+O) uses the desktop's XDG portal.
+Without one, as on some WSL setups, drag and drop and the `level` command line
+still work. `level` needs none of these libraries.
+
 ### Command line
 
 ```sh
@@ -185,9 +209,8 @@ A C compiler is needed for the bundled LAME (MP3) and libvorbis sources. On
 macOS and Linux, LAME is built with its own `./configure`, so `make` is
 needed too.
 
-On Linux the GUI needs the usual X11/Wayland and OpenGL libraries at runtime.
-To build it you need `libxkbcommon-dev` and `libgtk-3-dev` (used by the file
-dialog).
+No extra development packages are needed on Linux: the GUI loads its display
+libraries at runtime (see [Linux desktop requirements](#linux-desktop-requirements)).
 
 | Crate | Purpose |
 |---|---|

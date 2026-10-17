@@ -1306,7 +1306,9 @@ version = "2.2.0"
 dependencies = [
  "eframe",
  "levelator-core",
+ "libloading",
  "rfd",
+ "winit",
 ]
 
 [[package]]

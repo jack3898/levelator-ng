@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Linux: the app no longer fails with `NoWaylandLib` / `NoCompositor` when
+  `WAYLAND_DISPLAY` is set but Wayland can't be used (common on WSL and
+  minimal installs). It falls back to X11, and prints the packages to install
+  if no display works at all.
+- README: Linux desktop requirements. No GTK is needed: the file dialog uses
+  the XDG portal.
+
 ## 2.2.0
 
 New features (not in the original Levelator):

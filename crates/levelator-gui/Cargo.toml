@@ -14,3 +14,8 @@ path = "src/main.rs"
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 rfd = "0.17"
 levelator-core = { path = "../levelator-core" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Same winit as eframe; used to pick X11 when Wayland is advertised but unusable.
+winit = { version = "0.30", default-features = false, features = ["x11", "wayland"] }
+libloading = "0.8"
