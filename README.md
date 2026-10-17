@@ -112,13 +112,26 @@ the app then quits, as in the original's batch mode.
 
 The prebuilt Linux binary can't find the Wayland/OpenGL libraries on NixOS,
 because they are not in the standard paths. Use the flake instead, which
-builds from source and links them in:
+builds from source and links them in.
+
+**Run it without installing:** nothing is added to your profile or system,
+and the build is cleaned up by the next `nix-collect-garbage`.
 
 ```sh
-nix run github:jack3898/levelator-ng           # the app
-nix run github:jack3898/levelator-ng#level -- talk.wav   # the command line
+nix run github:jack3898/levelator-ng                      # open the app
+nix run github:jack3898/levelator-ng#level -- talk.wav    # one-off command-line run
+nix shell github:jack3898/levelator-ng                    # temporary shell with `levelator` and `level`
+```
+
+**Install it:**
+
+```sh
 nix profile install github:jack3898/levelator-ng
 ```
+
+Or add `inputs.levelator.url = "github:jack3898/levelator-ng";` to your
+system flake and put `levelator.packages.${system}.default` in
+`environment.systemPackages`.
 
 To use the prebuilt binary anyway, add the libraries to `nix-ld`:
 
