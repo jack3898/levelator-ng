@@ -16,15 +16,17 @@
 
       # winit/glutin load these at runtime with dlopen, so on NixOS they must
       # be on the binary's RUNPATH (they are not in any standard location).
+      # The X11 libraries moved out of `xorg` in newer nixpkgs; fall back to
+      # the old names so older nixpkgs still evaluate without warnings.
       guiRuntimeLibs =
         pkgs: with pkgs; [
           wayland
           libxkbcommon
           libGL
-          xorg.libX11
-          xorg.libXcursor
-          xorg.libXi
-          xorg.libXrandr
+          (pkgs.libx11 or pkgs.xorg.libX11)
+          (pkgs.libxcursor or pkgs.xorg.libXcursor)
+          (pkgs.libxi or pkgs.xorg.libXi)
+          (pkgs.libxrandr or pkgs.xorg.libXrandr)
         ];
     in
     {
