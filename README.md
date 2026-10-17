@@ -85,7 +85,7 @@ These apply even with every extra switched off:
 ## Download
 
 Prebuilt binaries are attached to each
-[GitHub Release](https://github.com/jack3898/levelator-reverse-engineer/releases):
+[GitHub Release](https://github.com/jack3898/levelator-ng/releases):
 
 | Platform | Archive | Contents |
 |---|---|---|

@@ -6,7 +6,7 @@ members = ["crates/levelator-core", "crates/level-cli", "crates/levelator-gui"]
 version = "2.2.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/jack3898/levelator-reverse-engineer"
+repository = "https://github.com/jack3898/levelator-ng"
 
 [profile.release]
 lto = "thin"
