@@ -108,6 +108,28 @@ you change them.
 Files passed on the command line (`levelator a.wav b.aiff`) are processed and
 the app then quits, as in the original's batch mode.
 
+### NixOS / Nix
+
+The prebuilt Linux binary can't find the Wayland/OpenGL libraries on NixOS,
+because they are not in the standard paths. Use the flake instead, which
+builds from source and links them in:
+
+```sh
+nix run github:jack3898/levelator-ng           # the app
+nix run github:jack3898/levelator-ng#level -- talk.wav   # the command line
+nix profile install github:jack3898/levelator-ng
+```
+
+To use the prebuilt binary anyway, add the libraries to `nix-ld`:
+
+```nix
+programs.nix-ld.enable = true;
+programs.nix-ld.libraries = with pkgs; [ wayland libxkbcommon libGL ];
+```
+
+`nix develop` gives a shell with the Rust toolchain and the libraries for
+`cargo run`.
+
 ### Linux desktop requirements
 
 The `levelator` app opens its window through Wayland or X11, and loads the

@@ -457,6 +457,16 @@ mod linux {
     }
 
     pub fn print_help() {
+        if std::path::Path::new("/etc/NIXOS").exists() {
+            eprintln!(
+                "\nlevelator could not open a window. NixOS keeps the Wayland/OpenGL libraries out of\n\
+                 the standard paths, so this prebuilt binary can't find them. Either:\n  \
+                 - run the Nix build instead:  nix run github:jack3898/levelator-ng\n  \
+                 - or add them to nix-ld:      programs.nix-ld.libraries = with pkgs; [ wayland libxkbcommon libGL ];\n\
+                 The command-line tool `level` needs none of these."
+            );
+            return;
+        }
         eprintln!(
             "\nlevelator could not open a window. On Linux it needs a Wayland or X11 desktop and these libraries:\n  \
              Debian/Ubuntu: sudo apt install libwayland-client0 libxkbcommon0 libxkbcommon-x11-0 libx11-6 libxcursor1 libxrandr2 libxi6 libgl1 libegl1\n  \
